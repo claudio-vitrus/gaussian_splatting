@@ -47,7 +47,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     if checkpoint is not None:
         print("torch load:", checkpoint)
         (model_params, first_iter) = torch.load(checkpoint)
-        print("model_params: ", model_params)
+        # print("model_params: ", model_params)
         print("checkpoint iterations: ", first_iter)
         gaussians.restore(model_params, opt)
     print("SETUP BACKGROUND COLOR")
