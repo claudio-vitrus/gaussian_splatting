@@ -8,6 +8,10 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
+import sys
+from pathlib import Path
+print(Path(__file__).parent.absolute())
+sys.path.append(str(Path(__file__).parent.absolute()))
 
 import os
 import torch
@@ -29,42 +33,56 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+    print("STARTING TRAINING ... ")
     first_iter = 0
-    tb_writer = prepare_output_and_logger(dataset)
+    # print("PREPARING OUTPUT AND LOGGER ... ")
+    # tb_writer = prepare_output_and_logger(dataset)
+    print("INSTANCIATING GAUSSIAN MODEL ... ")
     gaussians = GaussianModel(dataset.sh_degree)
+    print("INSTANCIATING SCENE ... ")
     scene = Scene(dataset, gaussians)
+    print("GAUSSIANS TRAINING SETUP ... ")
     gaussians.training_setup(opt)
-    if checkpoint:
+    print("checkpoint: ", checkpoint)
+    if checkpoint is not None:
+        print("torch load:", checkpoint)
         (model_params, first_iter) = torch.load(checkpoint)
+        print("model_params: ", model_params)
+        print("checkpoint iterations: ", first_iter)
         gaussians.restore(model_params, opt)
-
+    print("SETUP BACKGROUND COLOR")
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-
+   
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    print("STARTING TRAINING LOOP ...")
+    print(f"NETWORK GUI SHOULD BE NONE: {network_gui.conn}")
+
     viewpoint_stack = None
     ema_loss_for_log = 0.0
-    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
+    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress", total=(opt.iterations-first_iter))
+    print("")
     first_iter += 1
-    for iteration in range(first_iter, opt.iterations + 1):        
-        if network_gui.conn == None:
-            network_gui.try_connect()
-        while network_gui.conn != None:
-            try:
-                net_image_bytes = None
-                custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
-                if custom_cam != None:
-                    net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
-                    net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
-                network_gui.send(net_image_bytes, dataset.source_path)
-                if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
-                    break
-            except Exception as e:
-                network_gui.conn = None
-
-        iter_start.record()
+    for iteration in range(first_iter, opt.iterations + 1):
+        # print("CHECK NETWORK...")
+        # if network_gui.conn == None:
+        #     network_gui.try_connect()
+        # while network_gui.conn != None:
+        #     try:
+        #         net_image_bytes = None
+        #         custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
+        #         if custom_cam != None:
+        #             net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
+        #             net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
+        #         network_gui.send(net_image_bytes, dataset.source_path)
+        #         if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
+        #             break
+        #     except Exception as e:
+        #         network_gui.conn = None
+        # print("END CHECK NETWORK")
+        # iter_start.record()
 
         gaussians.update_learning_rate(iteration)
 
@@ -92,19 +110,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         loss.backward()
 
-        iter_end.record()
+        # iter_end.record()
 
         with torch.no_grad():
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             if iteration % 10 == 0:
+                print() # Hack to make porgress bar appear inside docker compose
                 progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
 
-            # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            # # Log and save
+            # training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -216,6 +235,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
+    
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
 
     # All done
