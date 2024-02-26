@@ -10,7 +10,6 @@
 #
 import sys
 from pathlib import Path
-print(Path(__file__).parent.absolute())
 sys.path.append(str(Path(__file__).parent.absolute()))
 
 import os
